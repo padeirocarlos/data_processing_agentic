@@ -38,5 +38,9 @@ Description of Flowchart:
 1. Clone the repository:
    ```bash
    git clone https://github.com/your-username/reflection-agent-data-processing.git
+   curl -fsSL https://ollama.com/install.sh | sh
+   ollama server
+   ollama pull ollama3  # pull one of this model: gemma4B_v gemma12B_v qwen3 gemini ollama3.2 deepseek
    cd data_processing_agentic
+   uv add -r requirements.txt
    uv run main.py
