@@ -1,6 +1,7 @@
 import os
 import json
 from dotenv import load_dotenv
+from agents.mcp import MCPServerStdio
 from contextlib import AsyncExitStack
 from typing import List, Dict, TypedDict
 from mcp.client.stdio import stdio_client
@@ -23,6 +24,8 @@ class Agentic_MCP_Server:
         self.available_tools: List[ToolDefinition] = [] # new
         self.tool_to_session: Dict[str, ClientSession] = {} # new
         
+        self.mcp_servers: Dict[str, list[MCPServerStdio]] = {} # new
+        
         self.available_resource: List[ToolDefinition] = [] # new
         self.resource_to_session: Dict[str, ClientSession] = {} # new
         
@@ -35,39 +38,19 @@ class Agentic_MCP_Server:
             read, write = stdio_transport
             client_session = await self.exit_stack.enter_async_context(ClientSession(read, write))
             
+            # Instead of using MCP tools directly we should give mcp_server function definitions for OpenAI support
+            self.mcp_servers[server_name] = [await self.exit_stack.enter_async_context(MCPServerStdio(server_config, client_session_timeout_seconds=360))]
+            
             await client_session.initialize()
             self.sessions.append(client_session)
             
             response = await client_session.list_tools()
-            response_resource = await client_session.list_tools()
-            
             tools = response.tools
-            if not tools:
-                print(f"\nConnected to {server_name} with tools:", [t.name for t in tools])
-            
-            resources = response_resource.list_resources()
-            if not resources:
-                print(f"\nConnected to {server_name} with resource:", [t.name for t in resources])
+            print(f"\nConnected to {server_name} with tools:", [t.name for t in tools])
             
             for tool in tools:
                 self.tool_to_session[tool.name]=client_session
-                
-                toolDefinition = ToolDefinition()
-                toolDefinition["name"]=tool.name
-                toolDefinition["description"]=tool.description
-                toolDefinition["input_schema"]=tool.input_schema
-                
-                self.available_tools.append(toolDefinition)
-                
-            for tool in resources:
-                self.resource_to_session[tool.name]=client_session
-                
-                toolDefinition = ToolDefinition()
-                toolDefinition["name"]=tool.name
-                toolDefinition["description"]=tool.description
-                toolDefinition["input_schema"]=tool.input_schema
-                
-                self.available_resource.append(toolDefinition)
+                self.available_tools.append(tool)
             
         except Exception as e:
             print(f"Failed to connect to server {server_name}: {e}")
@@ -75,7 +58,7 @@ class Agentic_MCP_Server:
     async def connect_to_servers(self): # new
         """Connect to all configured MCP servers."""
         try:
-            with open(os.path.join(os.getcwd(), "mcp_config/", "server_config.json"), "r") as file:
+            with open(os.path.join(os.getcwd(), "mcp_config", "server_config.json"), "r") as file:
                 data = json.load(file)
             
             servers = data.get("mcpServers", {})

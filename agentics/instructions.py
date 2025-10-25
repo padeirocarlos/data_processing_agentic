@@ -1,3 +1,4 @@
+import os
 from dotenv import load_dotenv
 from datetime import datetime
 load_dotenv(override=True)
@@ -30,48 +31,62 @@ def image_generate(pathsogens:str, prompts:list[str], caption:str, path:str)->st
     return prompt_
 
 
+def code_bug_fixer(out_path_name: str, buggy_code: str, error_message:str, traceback:str=None):
+    
+    prompt = f"""You are a Python debugging expert. Fix the code error.
+
+    BUGGY CODE:
+    {buggy_code}
+
+    ERROR:
+    {error_message}
+
+    {f"FULL TRACEBACK:\\n{traceback}" if traceback else ""}
+
+    OUTPUT FORMAT (strict):
+    Line 1: {{"diagnosis": "root cause and fix applied"}}
+    Line 2: {{"python_code": "<execute_python>\\n# fixed code\\n</execute_python>"}}
+
+    CONSTRAINTS:
+    - Include all imports
+    - pandas/matplotlib only
+    - df exists (columns: date, time, cash_type, card, price, coffee_name, quarter, month, year)
+    - Save to '{out_path_name}', dpi=300
+    - End with plt.close()
+    - No extra text outside JSON objects
+
+    Preserve the original visualization intent while fixing the bug.
+    """
+    return prompt
+
 def reflect_on_chart_and_improve(
     out_path_name: str,
     python_code_v1: str,  
 ) -> tuple[str, str]:
-    """
-    Critique the chart IMAGE and the original code against the instruction, 
-    then return refined matplotlib code.
-    Returns (feedback, refined_code_with_tags).
-    """
-    prompt = f"""
-    You are a data visualization expert.
-    Your task: critique the attached chart and the original code against the given instruction,
-    then return improved matplotlib code.
 
-    Original code (for context):
+    prompt = f"""You are a data visualization expert. Critique the attached chart and original code 
+                against the instruction, then provide improved matplotlib code.
+
+    ORIGINAL CODE (for reference):
     {python_code_v1}
 
-    OUTPUT FORMAT (STRICT):
-    1) First line: a valid JSON object with ONLY the "feedback" field.
-    Example: {{"feedback": "The legend is unclear and the axis labels overlap."}}
-            {{"python_code": "<execute_python> # valid python code here </execute_python>"}}
+    OUTPUT FORMAT (strict - no deviations):
+    Line 1: {{"feedback": "your critique here"}}
+    Line 2: {{"python_code": "<execute_python>\\n# your code here\\n</execute_python>"}}
 
-    2) Import all necessary libraries in the code. Don't assume any imports from the original code.
+    REQUIREMENTS:
+    - Include ALL necessary imports (pandas, matplotlib, etc.)
+    - Use pandas/matplotlib only (no seaborn)
+    - Assume df exists (do NOT read files)
+    - Save to '{out_path_name}' with dpi=300
+    - End with plt.close() (never plt.show())
+    - No markdown, backticks, or extra text outside the two JSON objects
 
-    HARD CONSTRAINTS:
-    - Do NOT include Markdown, backticks, or any extra prose outside the two parts above.
-    - Use pandas/matplotlib only (no seaborn).
-    - Assume df already exists; do not read from files.
-    - Save to '{out_path_name}' with dpi=300.
-    - Always call plt.close() at the end (no plt.show()).
-    - Include all necessary import statements.
-
-    Schema (columns available in df):
-    - date (M/D/YY)
-    - time (HH:MM)
-    - cash_type (card or cash)
-    - card (string)
-    - price (number)
-    - coffee_name (string)
-    - quarter (1-4)
-    - month (1-12)
-    - year (YYYY)
+    AVAILABLE COLUMNS:
+    - date (M/D/YY), time (HH:MM)
+    - cash_type (card/cash), card (string)
+    - price (float), coffee_name (string)
+    - quarter (1-4), month (1-12), year (YYYY)
     """
     return prompt
 
@@ -114,13 +129,8 @@ def build_chart_code(instruction: str, out_path_name: str) -> str:
     
     return prompt
 
-def email_instructions(to_emails:str=None, sender_email:str=None, report:str="", email_tool:str="email_sender"):
+def email_instructions(to_emails:str=f"[{os.getenv("GMAIL_TO"), os.getenv("GMAIL_USER")}]", from_emails:str=os.getenv("GMAIL_USER"), report:str="", email_tool:str="email_sender"):
     
-    if to_emails is None:
-        to_emails=["c.v.padeiro@gmail.com", "cpadeiro2012@gmail.com"]
-    if sender_email is None:
-        from_emails=["cpadeiro2012@gmail.com"]
-
     EMAIL_INSTRUCTIONS = f"""You are able to send a nicely formatted HTML email including this detailed report: {report} \n. 
     
     Task:

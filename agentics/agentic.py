@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from agents import Agent, Runner
 from .agents_client import model_client_name_dict
 from mcp_server.mcp_server import Agentic_MCP_Server
-from .out_puts import PythonCodeResult, ReflectImprovedPythonCodeResult
-from .instructions import build_chart_code, email_instructions, reflect_on_chart_and_improve
+from .out_puts import PythonCodeResult, ReflectImprovedPythonCodeResult, PythonCodeCheckedResult
+from .instructions import build_chart_code, email_instructions, reflect_on_chart_and_improve, code_bug_fixer
 
 load_dotenv(override=True)
 
@@ -27,6 +27,21 @@ class DataProcessingAgentic:
         self.agentic_mcp_server = Agentic_MCP_Server()
         await self.agentic_mcp_server.connect_to_servers()
         return self.agentic_mcp_server
+    
+    async def check_python_code_agent(self, buggy_code:str, model_name:str, out_path_name:str, error_message:str):
+        
+        messages = [{"role": "user", "content": " You are a Python debugging expert. Fix the code error."}]
+        
+        instruction = code_bug_fixer(out_path_name = out_path_name, buggy_code = buggy_code, error_message = error_message)
+        
+        agent =  Agent(
+                    name = self.name,
+                    instructions = instruction,
+                    model = self.get_model(self.model_name) if model_name is None else self.get_model(model_name),
+                    output_type=PythonCodeCheckedResult,)
+        
+        check_python_code_result = await Runner.run(agent, messages)
+        return check_python_code_result.final_output.python_code.strip()
         
     async def generate_chart_python_agent(self, generate_chart_instructions:str, 
                                           tools_details: list=[], 
@@ -41,7 +56,6 @@ class DataProcessingAgentic:
 
         return Agent(
             name = self.name,
-            # tools = tools_details,
             instructions = instructions_,
             model = self.get_model(self.model_name) if model_name is None else self.get_model(model_name),
             output_type=output_type,
@@ -56,29 +70,27 @@ class DataProcessingAgentic:
         if self.agentic_mcp_server is None:
             self.agentic_mcp_server = await self.connect_to_servers()
         
-        instructions_ = reflect_on_chart_and_improve( out_path_name=out_path_name, python_code_v1=python_code_v1)
+        instruction = reflect_on_chart_and_improve(out_path_name=out_path_name, python_code_v1=python_code_v1)
             
         return Agent(
             name = self.name,
-            instructions = instructions_,
-            tools = tools_details,
+            instructions = instruction,
             model = self.get_model(self.model_name) if model_name is None else self.get_model(model_name),
             output_type=output_type,)
         
-        
     async def send_email_agent(self, report, 
-                               to_emails:list=["c.v.padeiro@gmail.com","cpadeiro2012@gmail.com"], 
-                               sender_email:str="cpadeiro2012@gmail.com", 
+                               to_emails:list=[f"{os.getenv("GMAIL_TO"), os.getenv("GMAIL_USER")}"], 
+                               sender_email:str=os.getenv("GMAIL_USER"), 
                                model_name:str="llama3.2", 
                                output_type=None) -> Agent:
         
-        instructions_= email_instructions( to_emails, sender_email, report=report, email_tool="email_sender")
+        instruction = email_instructions( to_emails, sender_email, report=report, email_tool="email_sender")
 
         return Agent(
             name = self.name,
-            instructions = instructions_,
+            instructions = instruction,
             model = self.get_model(model_name),
-            tools = self.agentic_mcp_server.call_tool(tool_name="email_sender", tool_args={"body":None, "subject":None,"to_emails":to_emails,}),
+            mcp_servers = self.agentic_mcp_server.mcp_servers["email_server"], 
             output_type=output_type,)
     
     async def run(self, query:str="Create a plot comparing Q1 coffee sales in 2024 and 2025 using the data in coffee_sales.csv."):
@@ -89,15 +101,13 @@ class DataProcessingAgentic:
             
             dt = datetime.now()
             name = f"generate_chart_{dt.strftime("%Y_%m_%d")}{dt.hour}{dt.minute}{dt.second}"
-            # out_path_name=os.path.join(os.getcwd(),"out_puts",f"{name}.png")
-            out_path_name=os.path.join("out_puts",f"{name}.png")
+            out_path_name=os.path.join(os.getcwd(),"out_puts",f"{name}.png")
             
             if self.agentic_mcp_server is None:
                 self.agentic_mcp_server = await self.connect_to_servers()
                      
             ## STEP: 1
             generate_chart_python_agent = await self.generate_chart_python_agent(generate_chart_instructions = query, 
-                                                                    # tools_details = self.agentic_mcp_server.available_tools(),
                                                                     out_path_name = out_path_name,
                                                                     model_name = self.get_model("qwen3-coder"), # ollama3  gemma12B_v qwen3 gemini deepseek qwen3-coder
                                                                     output_type = PythonCodeResult,
@@ -110,7 +120,6 @@ class DataProcessingAgentic:
             
             messages = [{"role": "user", "content": content_}]
             generate_chart_python_result = await Runner.run(generate_chart_python_agent, messages)
-            await self.agentic_mcp_server.cleanup()
             
             # ## STEP: 2
             content_ = """ You are a data visualization expert.
@@ -118,13 +127,12 @@ class DataProcessingAgentic:
                             then return improved matplotlib code
                         """
             python_code_v1 = generate_chart_python_result.final_output.python_code.strip()
-            print(f" ============= 1.0 Python_code_v1: {python_code_v1} =============")
-            self.extract_exc_python_code(python_code_v1)
+            
+            await self.check_excusion_python_code(python_code_v1)
             
             dt = datetime.now()
             name = f"reflect_chart_{dt.strftime("%Y_%m_%d")}{dt.hour}{dt.minute}{dt.second}"
-            # out_path_name=os.path.join(os.getcwd(),"out_puts",f"{name}.png")
-            out_path_name=os.path.join("out_puts",f"{name}.png")
+            out_path_name = os.path.join(os.getcwd(),"out_puts",f"{name}.png")
             
             reflect_python_code_agent = await self.reflect_improve_chart_python_agent( 
                                                                     out_path_name=out_path_name, 
@@ -135,20 +143,17 @@ class DataProcessingAgentic:
             
             messages = [{"role": "user", "content": content_}]
             reflect_python_code_agent_result = await Runner.run(reflect_python_code_agent, messages)
-            await self.agentic_mcp_server.cleanup()
             
             ## STEP: 3
             content_ = """ You are expert in send emails to one or more recipients with custom subject and message content.
-                           with a subject line and body content
-                        """
+                           with a subject line and body content """
             
-            report = f"feedback: {reflect_python_code_agent_result.final_output.feedback["feedback"].strip()}  \n Python code: {reflect_python_code_agent_result.final_output.python_code["python_code"].strip()}"
-            print(f" ============= {report} =============")
-            self.extract_exc_python_code(reflect_python_code_agent_result.final_output.python_code["python_code"].strip())
+            report = f"feedback: {reflect_python_code_agent_result.final_output.feedback.strip()}  \n Python code: {reflect_python_code_agent_result.final_output.python_code.strip()}"
             
+            await self.check_excusion_python_code(reflect_python_code_agent_result.final_output.python_code.strip(), name="reflect_chart")
             
             email_sender_agent = await self.send_email_agent(report = report, 
-                                                             model_name = self.get_model("qwen3"),) ## ollama3.2 qwen3-coder qwen3
+                                                             model_name = self.get_model("ollama3.2"),) ## ollama3.2 qwen3-coder qwen3
             
             messages = [{"role": "user", "content": content_}]
             await Runner.run(email_sender_agent, messages)
@@ -172,6 +177,38 @@ class DataProcessingAgentic:
             self.df["year"] = self.df["date"].dt.year
         return self.df
 
+    async def check_excusion_python_code(self, python_code_v1: str=None, name: str="generate_chart"):
+        
+        exception_error = None
+        recheck_code = True
+        recheck_code_count = 0
+        
+        if python_code_v1 is not None:
+            dt = datetime.now()
+            name = f"{name}_{dt.strftime("%Y_%m_%d")}{dt.hour}{dt.minute}{dt.second}"
+            out_path_name=os.path.join(os.getcwd(),"out_puts",f"{name}.png")
+            while recheck_code:
+                try:
+                    if recheck_code_count != 0:
+                        python_code_v1 = await self.check_python_code_agent(buggy_code=python_code_v1, 
+                                                                      model_name="qwen3-coder", 
+                                                                      error_message=exception_error, 
+                                                                      out_path_name=out_path_name)
+                        print(f"[ ============= Number of attempts to fix code bugs : {recheck_code_count} ============= ]")
+    
+                    self.extract_exc_python_code(python_code_v1)
+                    print(f"[ +++++++++++++++ Bug code fixed attempts : {recheck_code_count} +++++++++++++++ ]")
+                    print(f" ====== Fixed code: ====== \n <<<<< \n {python_code_v1} \n >>>>> ]")
+                    recheck_code = False
+                    
+                except Exception as e:
+                    exception_error = str(e)
+                    recheck_code_count+=1
+                    if recheck_code_count>=50:
+                        recheck_code = False
+                        print(f"[ --------------- Quit attempts to fix code bugs : {recheck_code_count} --------------- ]")
+        return python_code_v1
+    
     def extract_exc_python_code(self, python_code_v1: str):
         code_v1 = re.search(r"<execute_python>([\s\S]*?)</execute_python>", python_code_v1)
         
